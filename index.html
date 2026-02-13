@@ -1,0 +1,401 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
+    <title>RED ROCK | ELEVATOR PITCH</title>
+    <style>
+        body { margin: 0; overflow: hidden; background: #111; font-family: 'Segoe UI', sans-serif; touch-action: none; user-select: none; }
+        canvas { display: block; }
+        
+        #ui-layer {
+            position: absolute; top: 0; left: 0; width: 100%; height: 100%; pointer-events: none;
+            display: flex; flex-direction: column; align-items: center; justify-content: space-between;
+        }
+
+        .hud-top {
+            margin-top: 40px; text-align: center; color: white;
+            text-shadow: 0 0 10px black; z-index: 10;
+        }
+        h1 { margin: 0; font-size: 1.5rem; letter-spacing: 2px; color: #ff3333; font-style: italic; }
+        p { margin: 5px 0 0 0; font-size: 0.9rem; color: #aaa; }
+
+        .controls-hint {
+            position: absolute; bottom: 20%; width: 100%; display: flex; justify-content: space-between; padding: 0 40px; box-sizing: border-box;
+            color: rgba(255,255,255,0.2); font-weight: bold; font-size: 2rem; pointer-events: none;
+        }
+
+        #message {
+            position: absolute; top: 40%; width: 100%; text-align: center;
+            font-size: 3rem; font-weight: 900; color: white; display: none;
+            text-shadow: 0 0 30px #ff0000; z-index: 20;
+        }
+
+        #book-btn {
+            pointer-events: auto; display: none; margin-top: 20px;
+            background: #00ff00; color: black; border: none; padding: 20px 40px;
+            font-size: 1.2rem; font-weight: bold; box-shadow: 0 0 20px #00ff00;
+            animation: pulse 1s infinite; cursor: pointer;
+        }
+        
+        #retry-btn {
+            pointer-events: auto; display: none; margin-top: 20px;
+            background: transparent; color: white; border: 2px solid white; padding: 15px 30px;
+            font-size: 1rem; cursor: pointer;
+        }
+
+        @keyframes pulse { 0% { transform: scale(1); } 50% { transform: scale(1.05); } 100% { transform: scale(1); } }
+
+        /* Split screen touch zones */
+        .touch-zone {
+            position: absolute; top: 0; height: 100%; width: 50%; z-index: 5; pointer-events: auto;
+        }
+        #left-zone { left: 0; border-right: 1px dashed rgba(255,255,255,0.1); }
+        #right-zone { right: 0; }
+        
+        .zone-active { background: rgba(255, 0, 0, 0.1); }
+    </style>
+</head>
+<body>
+
+    <div id="ui-layer">
+        <div class="hud-top">
+            <h1>RED ROCK // ELEVATE</h1>
+            <p>BALANCE THE CUBE. REACH THE TOP.</p>
+        </div>
+
+        <div id="message">
+            <div id="msg-text">CRITICAL FAILURE</div>
+            <button id="book-btn" onclick="window.location.href='https://calendly.com'">STRATEGY SECURED - BOOK NOW</button>
+            <button id="retry-btn" onclick="resetGame()">TRY AGAIN</button>
+        </div>
+
+        <div class="controls-hint">
+            <span>LEFT<br>THRUST</span>
+            <span>RIGHT<br>THRUST</span>
+        </div>
+    </div>
+
+    <div id="left-zone" class="touch-zone"></div>
+    <div id="right-zone" class="touch-zone"></div>
+
+    <canvas id="gameCanvas"></canvas>
+
+<script>
+    const canvas = document.getElementById('gameCanvas');
+    const ctx = canvas.getContext('2d');
+    
+    // CONFIG
+    const GRAVITY = 0.15;
+    const THRUST_POWER = 0.35;
+    const ROTATION_POWER = 0.05;
+    const FRICTION = 0.98;
+    const GROUND_LEVEL = 100; // pixels from bottom
+    const WIN_HEIGHT = -2000; // How high to fly
+    
+    let width, height;
+    let cameraY = 0;
+    let particles = [];
+    let gameState = 'PLAYING'; // PLAYING, WIN, LOSE
+    
+    // INPUTS
+    const input = { left: false, right: false };
+
+    // OBJECTS
+    const ship = {
+        x: 0, y: 0, w: 100, h: 20,
+        vx: 0, vy: 0, angle: 0, va: 0,
+        color: '#444'
+    };
+
+    const cube = {
+        x: 0, y: 0, size: 40,
+        vx: 0, vy: 0, angle: 0, va: 0,
+        onShip: true,
+        color: '#00ffff'
+    };
+
+    // SETUP
+    function resize() {
+        width = canvas.width = window.innerWidth;
+        height = canvas.height = window.innerHeight;
+        if(gameState === 'PLAYING') resetGame();
+    }
+    window.addEventListener('resize', resize);
+    
+    // TOUCH HANDLERS
+    const lZone = document.getElementById('left-zone');
+    const rZone = document.getElementById('right-zone');
+
+    const handleTouch = (zone, active) => (e) => {
+        e.preventDefault();
+        if(zone === 'left') { input.left = active; lZone.classList.toggle('zone-active', active); }
+        if(zone === 'right') { input.right = active; rZone.classList.toggle('zone-active', active); }
+    };
+
+    lZone.addEventListener('touchstart', handleTouch('left', true));
+    lZone.addEventListener('touchend', handleTouch('left', false));
+    rZone.addEventListener('touchstart', handleTouch('right', true));
+    rZone.addEventListener('touchend', handleTouch('right', false));
+    
+    // MOUSE FALLBACK (for testing on PC)
+    lZone.addEventListener('mousedown', handleTouch('left', true));
+    lZone.addEventListener('mouseup', handleTouch('left', false));
+    rZone.addEventListener('mousedown', handleTouch('right', true));
+    rZone.addEventListener('mouseup', handleTouch('right', false));
+
+    function resetGame() {
+        gameState = 'PLAYING';
+        document.getElementById('message').style.display = 'none';
+        document.getElementById('book-btn').style.display = 'none';
+        document.getElementById('retry-btn').style.display = 'none';
+        
+        ship.x = width / 2;
+        ship.y = height - 150;
+        ship.vx = 0; ship.vy = 0; ship.angle = 0; ship.va = 0;
+        
+        cube.x = width / 2;
+        cube.y = ship.y - 30;
+        cube.vx = 0; cube.vy = 0; cube.angle = 0; cube.va = 0;
+        cube.onShip = true;
+        
+        cameraY = 0;
+        particles = [];
+    }
+
+    function update() {
+        if(gameState !== 'PLAYING') {
+            requestAnimationFrame(update);
+            render();
+            return;
+        }
+
+        // --- SHIP PHYSICS ---
+        // Gravity
+        ship.vy += GRAVITY;
+
+        // Thrust
+        if(input.left) {
+            // Force vector relative to angle
+            let forceX = Math.sin(ship.angle) * THRUST_POWER;
+            let forceY = -Math.cos(ship.angle) * THRUST_POWER;
+            ship.vx += forceX;
+            ship.vy += forceY;
+            ship.va += ROTATION_POWER; // Rotate clockwise
+            addExhaust(ship.x - Math.cos(ship.angle)*30, ship.y - Math.sin(ship.angle)*30);
+        }
+        if(input.right) {
+            let forceX = Math.sin(ship.angle) * THRUST_POWER;
+            let forceY = -Math.cos(ship.angle) * THRUST_POWER;
+            ship.vx += forceX;
+            ship.vy += forceY;
+            ship.va -= ROTATION_POWER; // Rotate counter-clockwise
+            addExhaust(ship.x + Math.cos(ship.angle)*30, ship.y + Math.sin(ship.angle)*30);
+        }
+
+        // Apply Velocity
+        ship.x += ship.vx;
+        ship.y += ship.vy;
+        ship.angle += ship.va;
+
+        // Damping (Air resistance)
+        ship.vx *= 0.99; ship.vy *= 0.99; ship.va *= 0.95;
+
+        // Floor Collision (Reset)
+        if(ship.y > height - 50) {
+            ship.y = height - 50;
+            ship.vy = 0; ship.vx = 0; ship.va = 0; ship.angle = 0;
+            // Allow resetting on ground
+        }
+        
+        // Walls
+        if(ship.x < 50) ship.vx += 1;
+        if(ship.x > width - 50) ship.vx -= 1;
+
+        // --- CUBE PHYSICS ---
+        if(cube.onShip) {
+            // Match ship position + offset rotated by ship angle
+            // Simplified: The cube tries to stay at the center of ship, but slides based on angle
+            
+            // Calculate slide force based on tilt
+            let slideForce = Math.sin(ship.angle) * 1.5;
+            // Calculate centrifugal force from rotation
+            let centrifugal = ship.va * 10;
+            
+            // Move cube relative to center of ship
+            let offsetFromCenter = (cube.x - ship.x); 
+            
+            // Slide the cube locally
+            // We project the slide movement onto the ship's plane
+            let localSlide = slideForce + centrifugal + (offsetFromCenter * 0.05);
+            
+            // Update cube visual position based on ship
+            // First, get the "anchor" point (ship center top)
+            let anchorX = ship.x + Math.sin(ship.angle) * -15; 
+            let anchorY = ship.y + Math.cos(ship.angle) * -15;
+            
+            // Now apply the sliding offset along the ship's width vector
+            let widthVectorX = Math.cos(ship.angle);
+            let widthVectorY = Math.sin(ship.angle);
+            
+            // Track the "slide" value (distance from center)
+            if(!cube.slideVal) cube.slideVal = 0;
+            cube.slideVal += localSlide;
+            
+            // Set actual world position
+            cube.x = anchorX + (widthVectorX * cube.slideVal);
+            cube.y = anchorY + (widthVectorY * cube.slideVal);
+            cube.angle = ship.angle;
+
+            // Check if Fell Off
+            if(Math.abs(cube.slideVal) > ship.w/2 + 10) {
+                cube.onShip = false;
+                // Inherit velocity
+                cube.vx = ship.vx + (widthVectorX * localSlide);
+                cube.vy = ship.vy + (widthVectorY * localSlide);
+            }
+
+        } else {
+            // Freefall physics
+            cube.vy += GRAVITY;
+            cube.x += cube.vx;
+            cube.y += cube.vy;
+            cube.angle += cube.va;
+            
+            // Lose Condition check
+            if(dist(cube.x, cube.y, ship.x, ship.y) > 500 || cube.y > height) {
+                endGame(false);
+            }
+        }
+
+        // Camera Follow
+        let targetY = height/2 - ship.y;
+        cameraY += (targetY - cameraY) * 0.1;
+
+        // Win Condition
+        if(ship.y < WIN_HEIGHT && cube.onShip) {
+            endGame(true);
+        }
+
+        // Particle update
+        updateParticles();
+        requestAnimationFrame(update);
+        render();
+    }
+
+    function render() {
+        ctx.fillStyle = '#111';
+        ctx.fillRect(0, 0, width, height);
+        
+        ctx.save();
+        ctx.translate(0, cameraY); // Apply Camera
+
+        // Draw Tunnel/Background Walls
+        ctx.fillStyle = '#222';
+        ctx.fillRect(0, -10000, 40, 20000);
+        ctx.fillRect(width-40, -10000, 40, 20000);
+        
+        // Draw Height Markers
+        ctx.fillStyle = '#444';
+        ctx.font = "20px monospace";
+        for(let i=0; i>-3000; i-=500) {
+            ctx.fillRect(40, i, width-80, 2);
+            ctx.fillText("ALTITUDE: " + Math.abs(i), 50, i-10);
+        }
+        
+        // Draw Finish Line
+        ctx.fillStyle = 'rgba(0, 255, 0, 0.2)';
+        ctx.fillRect(40, WIN_HEIGHT - 200, width-80, 200);
+        ctx.fillStyle = '#00ff00';
+        ctx.fillText("STRATEGY ZONE", width/2 - 60, WIN_HEIGHT - 10);
+
+        // Draw Ship
+        ctx.save();
+        ctx.translate(ship.x, ship.y);
+        ctx.rotate(ship.angle);
+        
+        ctx.shadowBlur = 15; ctx.shadowColor = '#ff0000';
+        ctx.fillStyle = '#888';
+        ctx.fillRect(-ship.w/2, -ship.h/2, ship.w, ship.h); // Main Body
+        
+        // Thrusters
+        ctx.fillStyle = input.left ? '#ff0000' : '#550000';
+        ctx.fillRect(-ship.w/2, ship.h/2, 15, 10);
+        ctx.fillStyle = input.right ? '#ff0000' : '#550000';
+        ctx.fillRect(ship.w/2 - 15, ship.h/2, 15, 10);
+        
+        ctx.restore();
+
+        // Draw Cube
+        ctx.save();
+        ctx.translate(cube.x, cube.y);
+        ctx.rotate(cube.angle);
+        ctx.shadowBlur = 20; ctx.shadowColor = '#00ffff';
+        ctx.fillStyle = '#00ffff';
+        ctx.fillRect(-cube.size/2, -cube.size/2 + (cube.onShip? -15:0), cube.size, cube.size);
+        // "Strategy" Text on cube (too small to read maybe, but adds detail)
+        ctx.restore();
+
+        // Draw Particles
+        particles.forEach(p => {
+            ctx.fillStyle = p.color;
+            ctx.globalAlpha = p.life;
+            ctx.beginPath(); ctx.arc(p.x, p.y, p.size, 0, Math.PI*2); ctx.fill();
+            ctx.globalAlpha = 1;
+        });
+
+        ctx.restore();
+    }
+
+    function addExhaust(x, y) {
+        for(let i=0; i<3; i++) {
+            particles.push({
+                x: x, y: y,
+                vx: (Math.random()-0.5)*2,
+                vy: (Math.random())*5 + 2, // Downward
+                life: 1.0, size: Math.random()*5,
+                color: Math.random()>0.5 ? '#ff0000' : '#ffaa00'
+            });
+        }
+    }
+
+    function updateParticles() {
+        for(let i=particles.length-1; i>=0; i--) {
+            let p = particles[i];
+            p.x += p.vx; p.y += p.vy;
+            p.life -= 0.05;
+            if(p.life <= 0) particles.splice(i, 1);
+        }
+    }
+
+    function dist(x1,y1,x2,y2) { return Math.hypot(x1-x2, y1-y2); }
+
+    function endGame(win) {
+        gameState = win ? 'WIN' : 'LOSE';
+        const msg = document.getElementById('message');
+        const txt = document.getElementById('msg-text');
+        const book = document.getElementById('book-btn');
+        const retry = document.getElementById('retry-btn');
+        
+        msg.style.display = 'block';
+        retry.style.display = 'block';
+        
+        if(win) {
+            txt.innerText = "STRATEGY ELEVATED";
+            txt.style.color = "#00ff00";
+            book.style.display = 'inline-block';
+            retry.style.display = 'none'; // No retry if you win, just book!
+        } else {
+            txt.innerText = "BALANCE LOST";
+            txt.style.color = "#ff0000";
+            book.style.display = 'none';
+        }
+    }
+
+    resize();
+    resetGame();
+    update();
+
+</script>
+</body>
+</html>
