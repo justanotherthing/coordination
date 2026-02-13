@@ -85,23 +85,23 @@
     const canvas = document.getElementById('gameCanvas');
     const ctx = canvas.getContext('2d');
     
-    // CONFIG
-    const GRAVITY = 0.15;
-    const THRUST_POWER = 0.35;
-    const ROTATION_POWER = 0.05;
-    const FRICTION = 0.98;
-    const GROUND_LEVEL = 100; // pixels from bottom
-    const WIN_HEIGHT = -2000; // How high to fly
+    // --- UPDATED CONFIGURATION ---
+    const GRAVITY = 0.12;           // Slightly lower gravity for floatier feel
+    const THRUST_POWER = 0.22;      // REDUCED: Was 0.35. Much smoother lift now.
+    const ROTATION_POWER = 0.025;   // REDUCED: Was 0.05. Slower tilting.
+    const MAX_TILT = 0.5;           // NEW: Max tilt angle (~30 degrees). Prevents flipping.
+    const ROTATION_DAMPING = 0.90;  // NEW: Stops spinning faster when you let go.
+    
+    const GROUND_LEVEL = 100;
+    const WIN_HEIGHT = -2000;
     
     let width, height;
     let cameraY = 0;
     let particles = [];
-    let gameState = 'PLAYING'; // PLAYING, WIN, LOSE
+    let gameState = 'PLAYING'; 
     
-    // INPUTS
     const input = { left: false, right: false };
 
-    // OBJECTS
     const ship = {
         x: 0, y: 0, w: 100, h: 20,
         vx: 0, vy: 0, angle: 0, va: 0,
@@ -112,11 +112,10 @@
         x: 0, y: 0, size: 40,
         vx: 0, vy: 0, angle: 0, va: 0,
         onShip: true,
-        slideVal: 0, // Track relative position
+        slideVal: 0, 
         color: '#00ffff'
     };
 
-    // SETUP
     function resize() {
         width = canvas.width = window.innerWidth;
         height = canvas.height = window.innerHeight;
@@ -124,7 +123,6 @@
     }
     window.addEventListener('resize', resize);
     
-    // TOUCH HANDLERS
     const lZone = document.getElementById('left-zone');
     const rZone = document.getElementById('right-zone');
 
@@ -138,8 +136,6 @@
     lZone.addEventListener('touchend', handleTouch('left', false));
     rZone.addEventListener('touchstart', handleTouch('right', true));
     rZone.addEventListener('touchend', handleTouch('right', false));
-    
-    // MOUSE FALLBACK (for testing on PC)
     lZone.addEventListener('mousedown', handleTouch('left', true));
     lZone.addEventListener('mouseup', handleTouch('left', false));
     rZone.addEventListener('mousedown', handleTouch('right', true));
@@ -155,12 +151,11 @@
         ship.y = height - 150;
         ship.vx = 0; ship.vy = 0; ship.angle = 0; ship.va = 0;
         
-        // RESET CUBE COMPLETELY
         cube.x = width / 2;
         cube.y = ship.y - 30;
         cube.vx = 0; cube.vy = 0; cube.angle = 0; cube.va = 0;
         cube.onShip = true;
-        cube.slideVal = 0; // <--- BUG FIXED HERE
+        cube.slideVal = 0; 
         
         cameraY = 0;
         particles = [];
@@ -174,109 +169,96 @@
         }
 
         // --- SHIP PHYSICS ---
-        // Gravity
         ship.vy += GRAVITY;
 
-        // Thrust
         if(input.left) {
-            // Force vector relative to angle
             let forceX = Math.sin(ship.angle) * THRUST_POWER;
             let forceY = -Math.cos(ship.angle) * THRUST_POWER;
-            ship.vx += forceX;
-            ship.vy += forceY;
-            ship.va += ROTATION_POWER; // Rotate clockwise
+            ship.vx += forceX; ship.vy += forceY;
+            ship.va += ROTATION_POWER; 
             addExhaust(ship.x - Math.cos(ship.angle)*30, ship.y - Math.sin(ship.angle)*30);
         }
         if(input.right) {
             let forceX = Math.sin(ship.angle) * THRUST_POWER;
             let forceY = -Math.cos(ship.angle) * THRUST_POWER;
-            ship.vx += forceX;
-            ship.vy += forceY;
-            ship.va -= ROTATION_POWER; // Rotate counter-clockwise
+            ship.vx += forceX; ship.vy += forceY;
+            ship.va -= ROTATION_POWER;
             addExhaust(ship.x + Math.cos(ship.angle)*30, ship.y + Math.sin(ship.angle)*30);
         }
 
-        // Apply Velocity
         ship.x += ship.vx;
         ship.y += ship.vy;
         ship.angle += ship.va;
 
-        // Damping (Air resistance)
-        ship.vx *= 0.99; ship.vy *= 0.99; ship.va *= 0.95;
+        // Damping
+        ship.vx *= 0.99; 
+        ship.vy *= 0.99; 
+        ship.va *= ROTATION_DAMPING; // Higher damping for stability
 
-        // Floor Collision (Reset)
+        // --- ANTI-FLIP CLAMP ---
+        if (ship.angle > MAX_TILT) {
+            ship.angle = MAX_TILT;
+            ship.va = 0; // Stop rotation momentum
+        }
+        if (ship.angle < -MAX_TILT) {
+            ship.angle = -MAX_TILT;
+            ship.va = 0;
+        }
+
+        // Floor Collision
         if(ship.y > height - 50) {
             ship.y = height - 50;
             ship.vy = 0; ship.vx = 0; ship.va = 0; ship.angle = 0;
-            // Allow resetting on ground
         }
         
         // Walls
-        if(ship.x < 50) ship.vx += 1;
-        if(ship.x > width - 50) ship.vx -= 1;
+        if(ship.x < 50) { ship.x = 50; ship.vx *= -0.5; }
+        if(ship.x > width - 50) { ship.x = width - 50; ship.vx *= -0.5; }
 
         // --- CUBE PHYSICS ---
         if(cube.onShip) {
-            // Calculate slide force based on tilt
             let slideForce = Math.sin(ship.angle) * 1.5;
-            // Calculate centrifugal force from rotation
             let centrifugal = ship.va * 10;
+            let localSlide = slideForce + centrifugal + (cube.slideVal * 0.05);
             
-            // Move cube relative to center of ship
-            let offsetFromCenter = (cube.slideVal || 0);
-            
-            // Slide the cube locally
-            // We project the slide movement onto the ship's plane
-            let localSlide = slideForce + centrifugal + (offsetFromCenter * 0.05);
-            
-            // Update cube visual position based on ship
-            // First, get the "anchor" point (ship center top)
             let anchorX = ship.x + Math.sin(ship.angle) * -15; 
             let anchorY = ship.y + Math.cos(ship.angle) * -15;
-            
-            // Now apply the sliding offset along the ship's width vector
             let widthVectorX = Math.cos(ship.angle);
             let widthVectorY = Math.sin(ship.angle);
             
-            // Track the "slide" value (distance from center)
             cube.slideVal += localSlide;
             
-            // Set actual world position
+            // Limit cube slide speed (friction)
+            cube.slideVal *= 0.98;
+
             cube.x = anchorX + (widthVectorX * cube.slideVal);
             cube.y = anchorY + (widthVectorY * cube.slideVal);
             cube.angle = ship.angle;
 
-            // Check if Fell Off
             if(Math.abs(cube.slideVal) > ship.w/2 + 10) {
                 cube.onShip = false;
-                // Inherit velocity
                 cube.vx = ship.vx + (widthVectorX * localSlide);
                 cube.vy = ship.vy + (widthVectorY * localSlide);
             }
 
         } else {
-            // Freefall physics
             cube.vy += GRAVITY;
             cube.x += cube.vx;
             cube.y += cube.vy;
             cube.angle += cube.va;
             
-            // Lose Condition check
             if(dist(cube.x, cube.y, ship.x, ship.y) > 500 || cube.y > height) {
                 endGame(false);
             }
         }
 
-        // Camera Follow
         let targetY = height/2 - ship.y;
         cameraY += (targetY - cameraY) * 0.1;
 
-        // Win Condition
         if(ship.y < WIN_HEIGHT && cube.onShip) {
             endGame(true);
         }
 
-        // Particle update
         updateParticles();
         requestAnimationFrame(update);
         render();
@@ -287,14 +269,12 @@
         ctx.fillRect(0, 0, width, height);
         
         ctx.save();
-        ctx.translate(0, cameraY); // Apply Camera
+        ctx.translate(0, cameraY); 
 
-        // Draw Tunnel/Background Walls
         ctx.fillStyle = '#222';
         ctx.fillRect(0, -10000, 40, 20000);
         ctx.fillRect(width-40, -10000, 40, 20000);
         
-        // Draw Height Markers
         ctx.fillStyle = '#444';
         ctx.font = "20px monospace";
         for(let i=0; i>-3000; i-=500) {
@@ -302,7 +282,6 @@
             ctx.fillText("ALTITUDE: " + Math.abs(i), 50, i-10);
         }
         
-        // Draw Finish Line
         ctx.fillStyle = 'rgba(0, 255, 0, 0.2)';
         ctx.fillRect(40, WIN_HEIGHT - 200, width-80, 200);
         ctx.fillStyle = '#00ff00';
@@ -315,14 +294,12 @@
         
         ctx.shadowBlur = 15; ctx.shadowColor = '#ff0000';
         ctx.fillStyle = '#888';
-        ctx.fillRect(-ship.w/2, -ship.h/2, ship.w, ship.h); // Main Body
+        ctx.fillRect(-ship.w/2, -ship.h/2, ship.w, ship.h); 
         
-        // Thrusters
         ctx.fillStyle = input.left ? '#ff0000' : '#550000';
         ctx.fillRect(-ship.w/2, ship.h/2, 15, 10);
         ctx.fillStyle = input.right ? '#ff0000' : '#550000';
         ctx.fillRect(ship.w/2 - 15, ship.h/2, 15, 10);
-        
         ctx.restore();
 
         // Draw Cube
@@ -332,10 +309,8 @@
         ctx.shadowBlur = 20; ctx.shadowColor = '#00ffff';
         ctx.fillStyle = '#00ffff';
         ctx.fillRect(-cube.size/2, -cube.size/2 + (cube.onShip? -15:0), cube.size, cube.size);
-        // "Strategy" Text on cube (too small to read maybe, but adds detail)
         ctx.restore();
 
-        // Draw Particles
         particles.forEach(p => {
             ctx.fillStyle = p.color;
             ctx.globalAlpha = p.life;
@@ -351,7 +326,7 @@
             particles.push({
                 x: x, y: y,
                 vx: (Math.random()-0.5)*2,
-                vy: (Math.random())*5 + 2, // Downward
+                vy: (Math.random())*5 + 2, 
                 life: 1.0, size: Math.random()*5,
                 color: Math.random()>0.5 ? '#ff0000' : '#ffaa00'
             });
@@ -383,7 +358,7 @@
             txt.innerText = "STRATEGY ELEVATED";
             txt.style.color = "#00ff00";
             book.style.display = 'inline-block';
-            retry.style.display = 'none'; // No retry if you win, just book!
+            retry.style.display = 'none'; 
         } else {
             txt.innerText = "BALANCE LOST";
             txt.style.color = "#ff0000";
