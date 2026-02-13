@@ -112,6 +112,7 @@
         x: 0, y: 0, size: 40,
         vx: 0, vy: 0, angle: 0, va: 0,
         onShip: true,
+        slideVal: 0, // Track relative position
         color: '#00ffff'
     };
 
@@ -154,10 +155,12 @@
         ship.y = height - 150;
         ship.vx = 0; ship.vy = 0; ship.angle = 0; ship.va = 0;
         
+        // RESET CUBE COMPLETELY
         cube.x = width / 2;
         cube.y = ship.y - 30;
         cube.vx = 0; cube.vy = 0; cube.angle = 0; cube.va = 0;
         cube.onShip = true;
+        cube.slideVal = 0; // <--- BUG FIXED HERE
         
         cameraY = 0;
         particles = [];
@@ -214,16 +217,13 @@
 
         // --- CUBE PHYSICS ---
         if(cube.onShip) {
-            // Match ship position + offset rotated by ship angle
-            // Simplified: The cube tries to stay at the center of ship, but slides based on angle
-            
             // Calculate slide force based on tilt
             let slideForce = Math.sin(ship.angle) * 1.5;
             // Calculate centrifugal force from rotation
             let centrifugal = ship.va * 10;
             
             // Move cube relative to center of ship
-            let offsetFromCenter = (cube.x - ship.x); 
+            let offsetFromCenter = (cube.slideVal || 0);
             
             // Slide the cube locally
             // We project the slide movement onto the ship's plane
@@ -239,7 +239,6 @@
             let widthVectorY = Math.sin(ship.angle);
             
             // Track the "slide" value (distance from center)
-            if(!cube.slideVal) cube.slideVal = 0;
             cube.slideVal += localSlide;
             
             // Set actual world position
